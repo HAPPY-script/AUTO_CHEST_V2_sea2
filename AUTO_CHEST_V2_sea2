@@ -1,116 +1,134 @@
 game.StarterGui:SetCore("SendNotification", {
-    Title = "Auto Chest V2";
+    Title = "Auto Chest V3";
     Text = "Created by HAPPY script";
     Duration = 7;
 })
 
-local UIS = game:GetService("UserInputService")
-local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
 local player = Players.LocalPlayer
+local Debris = game:GetService("Debris")
 
-local lungeSpeed = 300
-local skipDelay = 2
-local chestNames = {"Chest1", "Chest2", "Chest3", "FragChest"}
-local specialCoords = {
-    Vector3.new(-286.99, 306.26, 597.80),
-    Vector3.new(-6508.56, 83.31, -132.84),
-    Vector3.new(2284.91, 15.28, 905.56),
-    Vector3.new(923.21, 125.18, 32852.83)
+-- Danh sách tọa độ các đảo
+local islandCoordinates = {
+    Vector3.new(-381.05, 107.29, 356.17), -- cafe
+    Vector3.new(-2412.68, 225.47, -3640.47), -- cang 3
+    Vector3.new(-5117.15, 188.48, -5337.61), -- lava vs ice
+    Vector3.new(-5737.36, 126.03, -725.41), -- zombie
+    Vector3.new(-6505.21, 79.19, -120.21), -- vao boat ma
+    Vector3.new(910.69, 127.71, 32841.96), -- ra boat ma
+    Vector3.new(-5124.88, 3.22, 2378.53), -- mini island (zombie)
+    Vector3.new(4760.88, 8.31, 2848.09), -- vung xa xoi
+    Vector3.new(3779.73, 98.90, -3499.65), -- rau den
+    Vector3.new(802.93, 412.55, -5250.84), -- tuyet
+    Vector3.new(5853.65, 287.89, -6510.62), -- lau dai tuyet
+    Vector3.new(-3113.34, 322.27, -10287.84) -- dau lau
 }
 
+local recentlyVisited = {} -- Lưu tọa độ đã tới trong 4 lần gần nhất
+local lungeSpeed = 300
 local isActive = false
 local isRunning = false
 
-local function getClosestChest()
+-- Tìm tất cả PushBox (Chest)
+local function findPushBoxes()
+    local pushBoxes = {}
+    local function search(obj)
+        for _, child in ipairs(obj:GetChildren()) do
+            if child.Name == "PushBox" and child:IsA("BasePart") then
+                table.insert(pushBoxes, child)
+            end
+            search(child)
+        end
+    end
+    search(workspace)
+    return pushBoxes
+end
+
+-- Chọn đảo gần nhất chưa bị giới hạn
+local function getNextIsland()
+    for _, coord in ipairs(islandCoordinates) do
+        if not table.find(recentlyVisited, coord) then
+            table.insert(recentlyVisited, coord)
+            if #recentlyVisited > 4 then
+                table.remove(recentlyVisited, 1)
+            end
+            return coord
+        end
+    end
+    return nil -- Không tìm thấy tọa độ khả dụng
+end
+
+-- Di chuyển đến tọa độ cụ thể
+local function moveToPosition(position)
     local character = player.Character or player.CharacterAdded:Wait()
     local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    local closestChest
-    local minDistance = math.huge
 
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if table.find(chestNames, obj.Name) and obj:IsA("BasePart") then
-            local distance = (humanoidRootPart.Position - obj.Position).Magnitude
-            if distance < minDistance then
-                closestChest = obj
-                minDistance = distance
+    while isActive and (humanoidRootPart.Position - position).Magnitude > 5 do
+        local direction = (position - humanoidRootPart.Position).Unit
+        humanoidRootPart.CFrame = humanoidRootPart.CFrame + direction * (lungeSpeed * RunService.Heartbeat:Wait())
+    end
+end
+
+-- Kiểm soát ghế ngồi
+local function disableSeats()
+    for _, seat in ipairs(workspace:GetDescendants()) do
+        if seat:IsA("Seat") or seat:IsA("VehicleSeat") then
+            seat.Disabled = true
+        end
+    end
+end
+
+local function enableSeats()
+    for _, seat in ipairs(workspace:GetDescendants()) do
+        if seat:IsA("Seat") or seat:IsA("VehicleSeat") then
+            seat.Disabled = false
+        end
+    end
+end
+
+-- Chạy lặp để tìm và lướt đến các chest
+local function chestLoop()
+    disableSeats() -- Vô hiệu hóa ghế khi script đang chạy
+    while isActive do
+        local pushBoxes = findPushBoxes()
+        if #pushBoxes > 0 then
+            for _, pushBox in ipairs(pushBoxes) do
+                if not isActive then break end
+                moveToPosition(pushBox.Position)
+            end
+        else
+            local nextIsland = getNextIsland()
+            if nextIsland then
+                moveToPosition(nextIsland)
             end
         end
-    end
-
-    return closestChest
-end
-
-local function getChestCount()
-    local count = 0
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if table.find(chestNames, obj.Name) and obj:IsA("BasePart") then
-            count += 1
-        end
-    end
-    return count
-end
-
-local function teleportToPosition(position)
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    humanoidRootPart.CFrame = CFrame.new(position)
-end
-
-local function performLunge(target)
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-    local startTime = tick()
-
-    while target and target.Parent and (tick() - startTime < skipDelay) do
-        local direction = (target.Position - humanoidRootPart.Position).Unit
-        humanoidRootPart.CFrame = humanoidRootPart.CFrame + direction * (lungeSpeed * RunService.Heartbeat:Wait())
-
-        if (humanoidRootPart.Position - target.Position).Magnitude < 3 then
-            break
-        end
-    end
-end
-
-local function checkAndTeleport(target)
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-
-    for _, coord in ipairs(specialCoords) do
-        local distanceToTarget = (target.Position - coord).Magnitude
-        local distanceFromPlayer = (humanoidRootPart.Position - target.Position).Magnitude
-
-        if distanceToTarget < distanceFromPlayer then
-            teleportToPosition(coord)
-            task.wait(0.5)
-            teleportToPosition(coord + Vector3.new(0, 100, 0))
-            break
-        end
-    end
-end
-
-local function lungeLoop()
-    while isActive do
-        local closestChest = getClosestChest()
-        if closestChest then
-            checkAndTeleport(closestChest)
-            performLunge(closestChest)
-        else
-            RunService.Heartbeat:Wait()
-        end
+        task.wait(1) -- Chờ trước khi tìm lại chest
     end
     isRunning = false
+    enableSeats() -- Bật lại ghế khi script dừng
 end
 
+-- Tạo menu GUI
 local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
 screenGui.ResetOnSpawn = false
+
 local frame = Instance.new("Frame", screenGui)
-frame.Size = UDim2.new(0, 250, 0, 200)
-frame.Position = UDim2.new(0.5, -125, 0.5, -75)
-frame.BackgroundColor3 = Color3.fromRGB(80, 50, 30)
+frame.Size = UDim2.new(0, 300, 0, 200)
+frame.Position = UDim2.new(0.5, -150, 0.5, -100)
+frame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
 frame.BackgroundTransparency = 0.1
+frame.BorderSizePixel = 0
 frame.Active = true
 frame.Draggable = true
+
+-- Gradient nền từ đỏ lửa đến vàng lửa
+local gradient = Instance.new("UIGradient", frame)
+gradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(153, 50, 204)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(1, 0, 1))
+})
+gradient.Rotation = 90
 
 local uiCorner = Instance.new("UICorner", frame)
 uiCorner.CornerRadius = UDim.new(0.1, 0)
@@ -118,17 +136,17 @@ uiCorner.CornerRadius = UDim.new(0.1, 0)
 local title = Instance.new("TextLabel", frame)
 title.Size = UDim2.new(1, 0, 0, 30)
 title.Position = UDim2.new(0, 0, 0, 0)
-title.Text = "Treasure Hunt S2"
-title.TextColor3 = Color3.fromRGB(255, 215, 0)
+title.Text = "Auto Chest S2"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.BackgroundTransparency = 1
-title.Font = Enum.Font.Garamond
+title.Font = Enum.Font.GothamBold
 title.TextScaled = true
 
 local toggleButton = Instance.new("TextButton", frame)
 toggleButton.Size = UDim2.new(0.8, 0, 0.25, 0)
 toggleButton.Position = UDim2.new(0.1, 0, 0.3, 0)
-toggleButton.Text = "Stop"
-toggleButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+toggleButton.Text = "Start"
+toggleButton.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
 toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 toggleButton.Font = Enum.Font.GothamBold
 toggleButton.TextScaled = true
@@ -136,27 +154,20 @@ toggleButton.TextScaled = true
 local buttonCorner = Instance.new("UICorner", toggleButton)
 buttonCorner.CornerRadius = UDim.new(0.1, 0)
 
-local distanceChecker = Instance.new("TextLabel", frame)
-distanceChecker.Size = UDim2.new(0.8, 0, 0.2, 0)
-distanceChecker.Position = UDim2.new(0.1, 0, 0.6, 0)
-distanceChecker.Text = "Distance: 0 m"
-distanceChecker.TextColor3 = Color3.fromRGB(255, 255, 255)
-distanceChecker.BackgroundTransparency = 1
-distanceChecker.Font = Enum.Font.Gotham
-distanceChecker.TextScaled = true
+toggleButton.MouseButton1Click:Connect(function()
+    isActive = not isActive
+    toggleButton.Text = isActive and "Stop" or "Start"
+    toggleButton.BackgroundColor3 = isActive and Color3.fromRGB(200, 0, 0) or Color3.fromRGB(50, 200, 50)
 
-local chestCounter = Instance.new("TextLabel", frame)
-chestCounter.Size = UDim2.new(0.8, 0, 0.2, 0)
-chestCounter.Position = UDim2.new(0.1, 0, 0.8, 0)
-chestCounter.Text = "Chests: 0"
-chestCounter.TextColor3 = Color3.fromRGB(255, 255, 255)
-chestCounter.BackgroundTransparency = 1
-chestCounter.Font = Enum.Font.Gotham
-chestCounter.TextScaled = true
+    if isActive and not isRunning then
+        isRunning = true
+        task.spawn(chestLoop)
+    end
+end)
 
 local closeButton = Instance.new("TextButton", frame)
-closeButton.Size = UDim2.new(0, 30, 0, 30)
-closeButton.Position = UDim2.new(1, -35, 0, 5)
+closeButton.Size = UDim2.new(0.2, 0, 0.2, 0)
+closeButton.Position = UDim2.new(0.9, -25, 0, 5)
 closeButton.Text = "X"
 closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
 closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -164,54 +175,8 @@ closeButton.Font = Enum.Font.GothamBold
 closeButton.TextScaled = true
 
 local closeCorner = Instance.new("UICorner", closeButton)
-closeCorner.CornerRadius = UDim.new(0.5, 0)
-
-toggleButton.MouseButton1Click:Connect(function()
-    isActive = not isActive
-    toggleButton.Text = isActive and "Start" or "Stop"
-    toggleButton.BackgroundColor3 = isActive and Color3.fromRGB(50, 200, 50) or Color3.fromRGB(200, 0, 0)
-
-    if isActive and not isRunning then
-        isRunning = true
-        task.spawn(lungeLoop)
-    end
-end)
+closeCorner.CornerRadius = UDim.new(1, 0)
 
 closeButton.MouseButton1Click:Connect(function()
-    isActive = false
     screenGui:Destroy()
-end)
-
-local function preventSitting()
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoid = character:WaitForChild("Humanoid")
-
-    humanoid.Seated:Connect(function(isSeated)
-        if isActive and isSeated then
-            humanoid.Sit = false
-        end
-    end)
-end
-
-preventSitting()
-
--- Update chest counter
-task.spawn(function()
-    while true do
-        if chestCounter and chestCounter.Parent then
-            chestCounter.Text = "Chests: " .. getChestCount()
-        end
-
-        local closestChest = getClosestChest()
-        if closestChest then
-            local character = player.Character or player.CharacterAdded:Wait()
-            local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-            local distance = (humanoidRootPart.Position - closestChest.Position).Magnitude
-            distanceChecker.Text = "Distance: " .. math.floor(distance) .. " m"
-        else
-            distanceChecker.Text = "Distance: N/A"
-        end
-
-        task.wait(0.1)
-    end
 end)
